@@ -34,6 +34,16 @@ class RAGPipeline:
             self._loaded.add(mode)
         return retriever
 
+    def apply_settings(self) -> None:
+        """Rebuild LLM/embedding-backed components after a runtime config change.
+
+        Persisted indexes on disk are untouched; only the live clients are
+        dropped so the next ``ingest``/``ask`` picks up the new endpoints.
+        """
+        self.generator = Generator(self.settings)
+        self._retrievers.clear()
+        self._loaded.clear()
+
     def ingest(self, paths: list[str] | str) -> dict:
         docs = load_documents(paths)
         # Build both underlying indexes so every mode is queryable.

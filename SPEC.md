@@ -159,6 +159,18 @@ stream via the generation provider; assemble `Answer` with the cited contexts an
   "vector":bool,"pageindex":bool}`. Indexes for all enabled modes are built/persisted.
 - `POST /ask` `{"query":str, "mode"?:"vector"|"pageindex"|"hybrid", "top_k"?:int}` →
   `200 {"answer":str,"citations":[{doc_id,locator,origin,score}],"mode":str,"usage":{...}}`.
+- `GET /config` → `200` current LLM/embedding config with **API keys masked** (each role
+  reports `api_key_set:bool`, never the value): `{"reasoning":{base_url,model,api_key_set},
+  "generation":{...},"embedding":{provider,model,base_url,api_key_set},structured_output_mode}`.
+- `PUT /config` (all fields optional) updates the LLM/embedding endpoints **at runtime** without
+  a restart: `{"reasoning"?:{base_url?,api_key?,model?}, "generation"?:{...},
+  "embedding"?:{provider?,model?,base_url?,api_key?}, "structured_output_mode"?, "persist"?:bool}`.
+  A blank/omitted `api_key` keeps the current key. The change is applied to the live pipeline
+  (clients rebuilt; persisted indexes untouched) and, when `persist` is true (default), written
+  back to `.env` so it survives a restart. Returns the masked config plus
+  `{"llm_reachable":bool,"persisted":bool,"embedding_changed":bool}`. `embedding_changed:true`
+  signals that documents must be re-ingested (the vector index no longer matches the embeddings).
+- CORS is permissive (`*`) so a browser SPA on another origin can call the API.
 - Errors: `400` (bad input/unsupported format), `422` (validation), `503` (LLM endpoint
   unreachable), `500` (unexpected). Body: `{"error":{"type":str,"message":str}}`.
 - Startup loads persisted indexes; `mode` defaults to `retrieval_mode`, overridable per request.

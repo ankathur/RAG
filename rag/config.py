@@ -71,3 +71,31 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Cached singleton so the whole app shares one configuration."""
     return Settings()
+
+
+def write_env_vars(updates: dict[str, str], path: str = ".env") -> None:
+    """Upsert ``RAG_*`` lines into the ``.env`` file, preserving everything else.
+
+    Used when the LLM endpoint is changed at runtime and the change should
+    survive a restart. Existing keys are updated in place; new keys are appended;
+    comments and unrelated lines are left untouched.
+    """
+    from pathlib import Path
+
+    p = Path(path)
+    lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in updates:
+                out.append(f"{key}={updates[key]}")
+                seen.add(key)
+                continue
+        out.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            out.append(f"{key}={value}")
+    p.write_text("\n".join(out) + "\n", encoding="utf-8")

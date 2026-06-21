@@ -1,0 +1,17 @@
+# Evaluation extras (Ragas + deterministic IR harness). Install on top of
+# requirements.txt:  pip install -r requirements-eval.txt
+# Only needed to *run* eval/gen_testset.py and eval/run_eval.py; the core
+# service and the offline metric tests don't import these.
+#
+# NOTE: the langchain stack is pinned to the 0.3 generation on purpose. Ragas
+# 0.2.x (and even 0.4.x) still does `from langchain_community.chat_models.vertexai
+# import ChatVertexAI`, a module that langchain-community >=0.4 (the "langchain v1"
+# line) deleted — so an unpinned install pulls v1 and Ragas fails to import.
+ragas>=0.2,<0.3
+langchain>=0.3,<0.4
+langchain-core>=0.3,<0.4
+langchain-community>=0.3,<0.4
+langchain-openai>=0.2,<0.3
+datasets>=2.19
+pandas>=2.0
+rapidfuzz>=3.0          # ragas test-set transforms (string-distance relationships)

@@ -21,6 +21,19 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Evaluation harness (eval/). Mirrors requirements-eval.txt.
+# langchain pinned to the 0.3 line: ragas still imports a langchain_community
+# module that langchain v1 (>=0.4 community) removed. See requirements-eval.txt.
+eval = [
+    "ragas>=0.2,<0.3",
+    "langchain>=0.3,<0.4",
+    "langchain-core>=0.3,<0.4",
+    "langchain-community>=0.3,<0.4",
+    "langchain-openai>=0.2,<0.3",
+    "datasets>=2.19",
+    "pandas>=2.0",
+    "rapidfuzz>=3.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["rag*", "app*"]

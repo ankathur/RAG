@@ -1,9 +1,15 @@
 .venv/
 __pycache__/
 *.pyc
+.DS_Store
 .env
 data/indexes/
 data/kb/*
 !data/kb/.gitkeep
 .pytest_cache/
 *.egg-info/
+web/node_modules/
+web/dist/
+web/.env
+eval/results/
+eval/testset.jsonl

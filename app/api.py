@@ -10,10 +10,16 @@ import tempfile
 from typing import Literal
 
 from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from rag.config import get_settings
+from rag.config import (
+    EmbeddingProvider,
+    StructuredMode,
+    get_settings,
+    write_env_vars,
+)
 from rag.documents.loader import SUPPORTED_EXTS
 from rag.llm.base import LLMError, LLMUnreachableError
 from rag.llm.factory import build_llm
@@ -21,6 +27,16 @@ from rag.pipeline import RAGPipeline
 
 settings = get_settings()
 app = FastAPI(title="RAG System", version="0.1.0")
+
+# Permissive CORS so the React SPA (and any local-first client) can call the API
+# from another origin. Tighten allow_origins for a hardened deployment.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 pipeline = RAGPipeline(settings)
 
 Mode = Literal["vector", "pageindex", "hybrid"]
@@ -34,6 +50,27 @@ class AskRequest(BaseModel):
     query: str
     mode: Mode | None = None
     top_k: int | None = None
+
+
+class RoleConfig(BaseModel):
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+
+
+class EmbeddingConfig(BaseModel):
+    provider: EmbeddingProvider | None = None
+    model: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+
+
+class ConfigUpdate(BaseModel):
+    reasoning: RoleConfig | None = None
+    generation: RoleConfig | None = None
+    embedding: EmbeddingConfig | None = None
+    structured_output_mode: StructuredMode | None = None
+    persist: bool = True
 
 
 def _error(status: int, type_: str, message: str) -> JSONResponse:
@@ -113,4 +150,108 @@ def ask(req: AskRequest):
         ],
         "mode": answer.mode,
         "usage": answer.usage,
+    }
+
+
+def _current_config() -> dict:
+    """Current LLM/embedding config with API keys masked (see SPEC.md §15)."""
+    return {
+        "reasoning": {
+            "base_url": settings.reasoning_base_url,
+            "model": settings.reasoning_model,
+            "api_key_set": bool(settings.reasoning_api_key),
+        },
+        "generation": {
+            "base_url": settings.generation_base_url,
+            "model": settings.generation_model,
+            "api_key_set": bool(settings.generation_api_key),
+        },
+        "embedding": {
+            "provider": settings.embedding_provider,
+            "model": settings.embedding_model,
+            "base_url": settings.embedding_base_url,
+            "api_key_set": bool(settings.embedding_api_key),
+        },
+        "structured_output_mode": settings.structured_output_mode,
+    }
+
+
+def _apply_config(update: ConfigUpdate) -> tuple[dict[str, str], bool]:
+    """Mutate the live settings from ``update``.
+
+    Returns the changed ``RAG_*`` env vars (for optional persistence) and whether
+    the embedding config changed (which invalidates the vector index).
+    """
+    env: dict[str, str] = {}
+
+    def setf(field: str, value) -> None:
+        # Blank / omitted string -> leave the existing value untouched (lets the
+        # UI submit an empty api_key field to mean "keep current key").
+        if value is None:
+            return
+        if isinstance(value, str):
+            value = value.strip()
+            if value == "":
+                return
+        setattr(settings, field, value)
+        env[f"RAG_{field.upper()}"] = str(value)
+
+    if update.reasoning:
+        setf("reasoning_base_url", update.reasoning.base_url)
+        setf("reasoning_api_key", update.reasoning.api_key)
+        setf("reasoning_model", update.reasoning.model)
+    if update.generation:
+        setf("generation_base_url", update.generation.base_url)
+        setf("generation_api_key", update.generation.api_key)
+        setf("generation_model", update.generation.model)
+
+    embedding_changed = False
+    if update.embedding:
+        before = (
+            settings.embedding_provider,
+            settings.embedding_model,
+            settings.embedding_base_url,
+        )
+        setf("embedding_provider", update.embedding.provider)
+        setf("embedding_model", update.embedding.model)
+        setf("embedding_base_url", update.embedding.base_url)
+        setf("embedding_api_key", update.embedding.api_key)
+        embedding_changed = before != (
+            settings.embedding_provider,
+            settings.embedding_model,
+            settings.embedding_base_url,
+        )
+
+    if update.structured_output_mode:
+        setf("structured_output_mode", update.structured_output_mode)
+
+    return env, embedding_changed
+
+
+@app.get("/config")
+def get_config() -> dict:
+    return _current_config()
+
+
+@app.put("/config")
+def update_config(update: ConfigUpdate):
+    try:
+        env, embedding_changed = _apply_config(update)
+        pipeline.apply_settings()
+        persisted = bool(update.persist and env)
+        if persisted:
+            write_env_vars(env)
+    except Exception as exc:  # noqa: BLE001 - surface any failure as 500
+        return _error(500, "config_error", str(exc))
+
+    try:
+        reachable = build_llm("generation", settings).ping()
+    except Exception:
+        reachable = False
+
+    return {
+        **_current_config(),
+        "llm_reachable": reachable,
+        "persisted": persisted,
+        "embedding_changed": embedding_changed,
     }
