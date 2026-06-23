@@ -9,7 +9,7 @@ import os
 import tempfile
 from typing import Literal
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -40,10 +40,6 @@ app.add_middleware(
 pipeline = RAGPipeline(settings)
 
 Mode = Literal["vector", "pageindex", "hybrid"]
-
-
-class IngestPaths(BaseModel):
-    paths: list[str]
 
 
 class AskRequest(BaseModel):
@@ -93,29 +89,45 @@ def health() -> dict:
 
 
 @app.post("/ingest")
-async def ingest(
-    file: UploadFile | None = File(default=None),
-    paths: IngestPaths | None = None,
-):
+async def ingest(request: Request):
+    """Ingest a multipart file upload *or* a JSON ``{"paths": [...]}`` body.
+
+    A single endpoint can't bind both an ``UploadFile`` (which forces
+    ``multipart/form-data``) and a JSON model — FastAPI would ignore the JSON
+    body — so we branch on the content type and parse the body ourselves.
+    ``paths`` entries may be files or directories (directories are ingested
+    recursively).
+    """
+    content_type = request.headers.get("content-type", "")
     try:
-        if file is not None:
-            ext = os.path.splitext(file.filename or "")[1].lower()
+        if content_type.startswith("multipart/form-data"):
+            form = await request.form()
+            upload = form.get("file")
+            filename = getattr(upload, "filename", None)
+            if not filename:
+                return _error(400, "bad_request", "Provide a file upload or {'paths': [...]}.")
+            ext = os.path.splitext(filename)[1].lower()
             if ext not in SUPPORTED_EXTS:
                 return _error(
                     400,
                     "unsupported_media_type",
                     f"Unsupported file type {ext!r}. Supported: {sorted(SUPPORTED_EXTS)}",
                 )
-            safe_name = os.path.basename(file.filename or f"upload{ext}")
+            safe_name = os.path.basename(filename) or f"upload{ext}"
             with tempfile.TemporaryDirectory() as tmp:
                 dest = os.path.join(tmp, safe_name)
                 with open(dest, "wb") as fh:
-                    fh.write(await file.read())
+                    fh.write(await upload.read())
                 result = pipeline.ingest(dest)
-        elif paths is not None and paths.paths:
-            result = pipeline.ingest(paths.paths)
         else:
-            return _error(400, "bad_request", "Provide a file upload or {'paths': [...]}.")
+            try:
+                body = await request.json()
+            except Exception:
+                body = None
+            paths = body.get("paths") if isinstance(body, dict) else None
+            if not paths:
+                return _error(400, "bad_request", "Provide a file upload or {'paths': [...]}.")
+            result = pipeline.ingest(paths)
     except FileNotFoundError as exc:
         return _error(400, "not_found", str(exc))
     except ValueError as exc:
