@@ -38,16 +38,32 @@ uvicorn app.api:app --reload
 # Health
 curl localhost:8000/health
 
-# Ingest a document (file upload) — builds vector + pageindex indexes
+# Ingest a single document (file upload) — builds vector + pageindex indexes
 curl -F "file=@data/sample/handbook.md" localhost:8000/ingest
+
 # ...or by path:
 curl -X POST localhost:8000/ingest -H 'content-type: application/json' \
   -d '{"paths": ["data/sample/handbook.md"]}'
 
+# ...or ingest an ENTIRE FOLDER at once — recurses into subdirectories and builds
+# both indexes for every supported file (.pdf/.md/.txt). Heads-up: PageIndex
+# builds an LLM table-of-contents tree per document, so large PDFs take a while.
+curl -X POST localhost:8000/ingest -H 'content-type: application/json' \
+  -d '{"paths": ["data/kb/tb"]}'
+
 # Ask (mode optional; defaults to RAG_RETRIEVAL_MODE)
 curl -X POST localhost:8000/ask -H 'content-type: application/json' \
-  -d '{"query": "How much annual leave do employees get?", "mode": "hybrid"}'
+  -d '{"query": "What is the initial daily dose of SIRTURO (bedaquiline)?", "mode": "hybrid"}'
 ```
+
+### Sample corpus
+
+A ready-made tuberculosis corpus lives in [`data/kb/tb/`](data/kb/tb/): FDA drug
+labels and the CDC Core Curriculum (US-Government public domain) are included in
+the repo. The NWT Crown-copyright documents are listed in
+[`SOURCES.md`](data/kb/tb/SOURCES.md) with download URLs but are **not
+redistributed here** — fetch them into the same folder if you want the full set,
+then ingest the whole directory with the folder command above.
 
 ## Web UI
 

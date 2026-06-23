@@ -6,6 +6,15 @@ __pycache__/
 data/indexes/
 data/kb/*
 !data/kb/.gitkeep
+# Sample TB corpus: commit only the US-Government public-domain docs (FDA drug
+# labels + CDC curriculum) and provenance. NWT Crown-copyright files are marked
+# "not for redistribution" in SOURCES.md, so they stay local (grab them via the
+# URLs there).
+!data/kb/tb/
+data/kb/tb/*
+!data/kb/tb/SOURCES.md
+!data/kb/tb/fda-*.pdf
+!data/kb/tb/cdc-core-curriculum-tb.pdf
 .pytest_cache/
 *.egg-info/
 web/node_modules/
