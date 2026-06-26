@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from rag.config import (
     EmbeddingProvider,
+    RerankerProvider,
     StructuredMode,
     get_settings,
     write_env_vars,
@@ -61,10 +62,17 @@ class EmbeddingConfig(BaseModel):
     api_key: str | None = None
 
 
+class RerankerConfig(BaseModel):
+    provider: RerankerProvider | None = None
+    model: str | None = None
+    top_k: int | None = None
+
+
 class ConfigUpdate(BaseModel):
     reasoning: RoleConfig | None = None
     generation: RoleConfig | None = None
     embedding: EmbeddingConfig | None = None
+    reranker: RerankerConfig | None = None
     structured_output_mode: StructuredMode | None = None
     persist: bool = True
 
@@ -184,6 +192,11 @@ def _current_config() -> dict:
             "base_url": settings.embedding_base_url,
             "api_key_set": bool(settings.embedding_api_key),
         },
+        "reranker": {
+            "provider": settings.reranker,
+            "model": settings.reranker_model,
+            "top_k": settings.reranker_top_k,
+        },
         "structured_output_mode": settings.structured_output_mode,
     }
 
@@ -233,6 +246,12 @@ def _apply_config(update: ConfigUpdate) -> tuple[dict[str, str], bool]:
             settings.embedding_model,
             settings.embedding_base_url,
         )
+
+    if update.reranker:
+        setf("reranker", update.reranker.provider)
+        setf("reranker_model", update.reranker.model)
+        if update.reranker.top_k is not None:
+            setf("reranker_top_k", update.reranker.top_k)
 
     if update.structured_output_mode:
         setf("structured_output_mode", update.structured_output_mode)

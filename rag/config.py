@@ -16,6 +16,7 @@ RetrievalMode = Literal["vector", "pageindex", "hybrid"]
 HybridStrategy = Literal["merge_rerank", "pageindex_then_vector"]
 StructuredMode = Literal["auto", "json_schema", "json_object", "prompt"]
 EmbeddingProvider = Literal["local", "openai"]
+RerankerProvider = Literal["cross-encoder", "none"]
 
 
 class Settings(BaseSettings):
@@ -52,6 +53,11 @@ class Settings(BaseSettings):
     # ---- Chunking (vector) ----
     chunk_size: int = 800
     chunk_overlap: int = 120
+
+    # ---- Reranker ----
+    reranker: RerankerProvider = "none"
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_top_k: int | None = None  # defaults to top_k when None
 
     # ---- PageIndex ----
     pageindex_max_pages_per_node: int = 10

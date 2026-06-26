@@ -53,6 +53,7 @@ rag/documents/loader.py      # load_documents(paths) -> list[Document]
 rag/embeddings/{base,local,openai_compat}.py
 rag/llm/{base,openai_compat,structured,factory}.py
 rag/retrievers/{base,vector,pageindex,hybrid}.py
+rag/reranker/{base,cross_encoder,noop}.py
 rag/generation/generator.py
 rag/pipeline.py              # RAGPipeline
 rag/factory.py               # build_retriever(mode, settings)
@@ -77,6 +78,9 @@ app/api.py                   # FastAPI
 | `embedding_model` | `all-MiniLM-L6-v2` | Embedding model id |
 | `embedding_base_url` / `embedding_api_key` | unset | For `embedding_provider=openai` (`/v1/embeddings`) |
 | `chunk_size` / `chunk_overlap` | `800` / `120` | Vector chunking (chars) |
+| `reranker` | `none` | `cross-encoder` \| `none` |
+| `reranker_model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model id |
+| `reranker_top_k` | unset (uses `top_k`) | Final context count after reranking |
 | `chroma_dir` | `data/indexes/chroma` | Persistent vector store path |
 | `index_dir` | `data/indexes/pageindex` | PageIndex tree JSON path |
 | `pageindex_max_pages_per_node` | `10` | Tree build granularity |
@@ -141,6 +145,19 @@ metadata. `retrieve` = `embed_query` → top-k similarity → `RetrievedContext(
 - `merge_rerank` (default): run vector + pageindex, dedupe overlapping contexts, LLM rerank
   (`structured()` → ordered kept ids), return top-k.
 - `pageindex_then_vector`: PageIndex selects sections; vector search restricted to those pages.
+
+### 9.4 Reranker (`rag/reranker/`)
+- **Protocol** (`base.py`): `Reranker.rerank(query, contexts, k) -> list[RetrievedContext]`.
+  `build_reranker(settings)` dispatches by `settings.reranker`.
+- **Cross-encoder** (`cross_encoder.py`): wraps a `sentence-transformers` `CrossEncoder` model
+  (default `cross-encoder/ms-marco-MiniLM-L-6-v2`). Scores each (query, passage) pair, overwrites
+  `RetrievedContext.score` with the relevance score, sorts best-first, and returns top-k. Loaded
+  lazily on first use.
+- **No-op** (`noop.py`): pass-through that truncates to k; used when `reranker=none` (default).
+- **Pipeline integration**: when `reranker != "none"`, the pipeline over-fetches `k * 3` candidates
+  from the retriever, then the reranker selects the final `reranker_top_k` (or `top_k`) contexts
+  before generation. This is mode-agnostic — vector, pageindex, and hybrid all benefit.
+- Enable: `RAG_RERANKER=cross-encoder`.
 
 ## 10. Generation (`rag/generation/generator.py`)
 `answer(query, contexts, mode) -> Answer`. Build a system+user prompt embedding labeled
@@ -210,5 +227,5 @@ Ollama: `ollama serve` + `ollama pull qwen2.5:7b-instruct`). Use a Python 3.12 v
 lag for torch/chromadb).
 
 ## 19. Future enhancements
-- Streaming token responses to the client; auth; reranker model for vector; OCR for scanned PDFs;
-  iterative tree-descent search; per-tenant knowledge bases; evaluation harness for mode comparison.
+- Streaming token responses to the client; auth; OCR for scanned PDFs;
+  iterative tree-descent search; per-tenant knowledge bases.

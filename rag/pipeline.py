@@ -7,7 +7,12 @@ from rag.documents.loader import load_documents
 from rag.factory import build_retriever
 from rag.generation.generator import Generator
 from rag.models import Answer
+from rag.reranker.base import Reranker, build_reranker
 from rag.retrievers.base import Retriever
+
+# When a reranker is active, retrieve this many times the final k so the
+# reranker has a larger candidate pool to choose from.
+_RERANK_OVERSAMPLE = 3
 
 
 class RAGPipeline:
@@ -18,10 +23,14 @@ class RAGPipeline:
     """
 
     def __init__(
-        self, settings: Settings | None = None, generator: Generator | None = None
+        self,
+        settings: Settings | None = None,
+        generator: Generator | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.generator = generator or Generator(self.settings)
+        self.reranker: Reranker = reranker or build_reranker(self.settings)
         self._retrievers: dict[str, Retriever] = {}
         self._loaded: set[str] = set()
 
@@ -41,6 +50,7 @@ class RAGPipeline:
         dropped so the next ``ingest``/``ask`` picks up the new endpoints.
         """
         self.generator = Generator(self.settings)
+        self.reranker = build_reranker(self.settings)
         self._retrievers.clear()
         self._loaded.clear()
 
@@ -58,11 +68,20 @@ class RAGPipeline:
             "pageindex": True,
         }
 
+    @property
+    def _reranker_active(self) -> bool:
+        return self.settings.reranker != "none"
+
     def ask(
         self, query: str, mode: RetrievalMode | None = None, top_k: int | None = None
     ) -> Answer:
         mode = mode or self.settings.retrieval_mode
         k = top_k or self.settings.top_k
+        rerank_k = self.settings.reranker_top_k or k
+
         retriever = self._get(mode)
-        contexts = retriever.retrieve(query, k)
+        # Over-fetch when a reranker is active so it has a larger candidate pool.
+        fetch_k = k * _RERANK_OVERSAMPLE if self._reranker_active else k
+        contexts = retriever.retrieve(query, fetch_k)
+        contexts = self.reranker.rerank(query, contexts, rerank_k)
         return self.generator.answer(query, contexts, mode)
