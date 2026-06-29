@@ -1,0 +1,208 @@
+%% RAG System Architecture
+%% Render with: https://mermaid.live  or any Mermaid-compatible viewer
+
+flowchart TB
+    %% ===================== CLIENTS =====================
+    subgraph Clients["Clients"]
+        WebUI["Web UI<br/><small>React + Vite SPA</small>"]
+        REST["REST / cURL"]
+    end
+
+    %% ===================== API LAYER =====================
+    subgraph API["FastAPI  &lpar;app/api.py&rpar;"]
+        direction TB
+        Health["GET /health"]
+        Ingest["POST /ingest<br/><small>multipart file | JSON paths</small>"]
+        Ask["POST /ask<br/><small>query, mode?, top_k?</small>"]
+        CfgGet["GET /config"]
+        CfgPut["PUT /config"]
+    end
+
+    Clients -->|HTTP| API
+
+    %% ===================== PIPELINE =====================
+    subgraph Pipeline["RAGPipeline  &lpar;rag/pipeline.py&rpar;"]
+        direction TB
+        PipeIngest["ingest&lpar;paths&rpar;"]
+        PipeAsk["ask&lpar;query, mode, top_k&rpar;"]
+        PipeSettings["apply_settings&lpar;&rpar;"]
+    end
+
+    Ingest --> PipeIngest
+    Ask --> PipeAsk
+    CfgPut --> PipeSettings
+
+    %% ===================== DOCUMENT LOADER =====================
+    subgraph Loader["Document Loader  &lpar;rag/documents/loader.py&rpar;"]
+        direction LR
+        PDFLoad["PDF<br/><small>pypdf</small>"]
+        MDLoad["Markdown<br/><small>heading split</small>"]
+        TXTLoad["Plain Text<br/><small>window split</small>"]
+    end
+
+    PipeIngest --> Loader
+    Loader -->|"list[Document]<br/><small>id, pages, metadata</small>"| PipeIngest
+
+    %% ===================== RETRIEVER FACTORY =====================
+    subgraph Factory["Factory  &lpar;rag/factory.py&rpar;"]
+        BuildRetriever["build_retriever&lpar;mode&rpar;"]
+    end
+
+    PipeAsk --> Factory
+
+    %% ===================== RETRIEVERS =====================
+    subgraph Retrievers["Retrievers  &lpar;rag/retrievers/&rpar;"]
+        direction TB
+
+        subgraph VectorR["VectorRetriever"]
+            direction TB
+            VChunk["chunk_document&lpar;&rpar;<br/><small>fixed-size overlapping chunks</small>"]
+            VEmbed["embed &rarr; Chroma upsert"]
+            VSearch["embed_query &rarr; cosine top-k"]
+            VChunk --> VEmbed
+        end
+
+        subgraph PageIndexR["PageIndexRetriever"]
+            direction TB
+            PIBuild["LLM structured&lpar;&rpar;<br/><small>build ToC tree per doc</small>"]
+            PISearch["LLM structured&lpar;&rpar;<br/><small>select_sections &rarr; node ids</small>"]
+            PIFallback["lexical_fallback&lpar;&rpar;"]
+            PISearch -.->|"empty result"| PIFallback
+        end
+
+        subgraph HybridR["HybridRetriever"]
+            direction TB
+            MR["merge_rerank strategy<br/><small>run both, dedupe, LLM rerank</small>"]
+            PTV["pageindex_then_vector strategy<br/><small>PI selects pages, vector filters</small>"]
+        end
+    end
+
+    Factory -->|"mode=vector"| VectorR
+    Factory -->|"mode=pageindex"| PageIndexR
+    Factory -->|"mode=hybrid"| HybridR
+    HybridR --> VectorR
+    HybridR --> PageIndexR
+
+    %% ===================== RERANKER =====================
+    subgraph Reranker["Reranker  &lpar;rag/reranker/&rpar;"]
+        direction TB
+        BuildReranker["build_reranker&lpar;settings&rpar;"]
+        subgraph CE["CrossEncoderReranker"]
+            CEModel["sentence-transformers<br/>CrossEncoder<br/><small>default: ms-marco-MiniLM-L-6-v2</small>"]
+            CEScore["score each &lpar;query, passage&rpar; pair<br/>&rarr; sort best-first &rarr; top-k"]
+        end
+        NoOp["NoOpReranker<br/><small>pass-through, truncate to k</small>"]
+        BuildReranker -->|"reranker=cross-encoder"| CE
+        BuildReranker -->|"reranker=none"| NoOp
+    end
+
+    Retrievers -->|"list[RetrievedContext]<br/><small>over-fetched k*3</small>"| Reranker
+    Reranker -->|"list[RetrievedContext]<br/><small>top-k, re-scored</small>"| Generator
+
+    %% ===================== GENERATOR =====================
+    subgraph Generator["Generator  &lpar;rag/generation/generator.py&rpar;"]
+        direction TB
+        GenPrompt["Build prompt with<br/>labeled context passages"]
+        GenStream["LLM stream &rarr; answer text"]
+        GenAnswer["Answer<br/><small>text + citations + mode + usage</small>"]
+        GenPrompt --> GenStream --> GenAnswer
+    end
+
+    %% ===================== LLM PROVIDERS =====================
+    subgraph LLM["LLM Providers  &lpar;rag/llm/&rpar;"]
+        direction TB
+        LLMFactory["build_llm&lpar;role, settings&rpar;"]
+        subgraph OAI["OpenAICompatLLM  &lpar;openai SDK&rpar;"]
+            Complete["complete&lpar;&rpar;"]
+            Stream["stream&lpar;&rpar;"]
+            Structured["structured&lpar;&rpar;<br/><small>json_schema &rarr; json_object &rarr; prompt<br/>+ repair retry</small>"]
+            Ping["ping&lpar;&rpar;"]
+        end
+        LLMFactory --> OAI
+    end
+
+    subgraph LLMEndpoints["OpenAI-Compatible Endpoints"]
+        direction LR
+        ReasonEP["Reasoning Endpoint<br/><small>tree build/search, rerank<br/>default: Ollama qwen2.5:7b</small>"]
+        GenEP["Generation Endpoint<br/><small>answer synthesis<br/>default: Ollama qwen2.5:7b</small>"]
+    end
+
+    LLMFactory -->|"role=reasoning"| ReasonEP
+    LLMFactory -->|"role=generation"| GenEP
+    PIBuild --> LLM
+    PISearch --> LLM
+    MR --> LLM
+    Generator --> LLM
+
+    %% ===================== EMBEDDINGS =====================
+    subgraph Embeddings["Embeddings  &lpar;rag/embeddings/&rpar;"]
+        direction TB
+        EmbedFactory["build_embedding_provider&lpar;&rpar;"]
+        LocalEmbed["LocalEmbeddings<br/><small>sentence-transformers<br/>default: all-MiniLM-L6-v2</small>"]
+        OAIEmbed["OpenAICompatEmbeddings<br/><small>/v1/embeddings endpoint</small>"]
+        EmbedFactory -->|"provider=local"| LocalEmbed
+        EmbedFactory -->|"provider=openai"| OAIEmbed
+    end
+
+    VEmbed --> Embeddings
+    VSearch --> Embeddings
+
+    %% ===================== PERSISTENCE =====================
+    subgraph Storage["Persistence"]
+        direction LR
+        ChromaDB[("ChromaDB<br/><small>data/indexes/chroma<br/>cosine HNSW</small>")]
+        PIFiles[("PageIndex JSON<br/><small>data/indexes/pageindex/<br/>doc_id.json</small>")]
+    end
+
+    VectorR <-->|"upsert / query"| ChromaDB
+    PageIndexR <-->|"persist / load"| PIFiles
+
+    %% ===================== CONFIG =====================
+    subgraph Config["Configuration  &lpar;rag/config.py&rpar;"]
+        direction TB
+        Settings["Settings<br/><small>pydantic-settings<br/>env prefix: RAG_</small>"]
+        EnvFile[".env file"]
+        Settings <--> EnvFile
+    end
+
+    Pipeline --> Config
+    LLM --> Config
+    Embeddings --> Config
+    Reranker --> Config
+
+    %% ===================== DATA MODELS =====================
+    subgraph Models["Data Models  &lpar;rag/models.py&rpar;"]
+        direction LR
+        MDoc["Document<br/><small>id, source_path,<br/>format, pages</small>"]
+        MPage["Page<br/><small>number, text</small>"]
+        MChunk["Chunk<br/><small>id, doc_id,<br/>text, page</small>"]
+        MTree["TreeNode<br/><small>node_id, title,<br/>summary, pages,<br/>children</small>"]
+        MCtx["RetrievedContext<br/><small>text, doc_id,<br/>locator, score,<br/>origin</small>"]
+        MAns["Answer<br/><small>text, citations,<br/>mode, usage</small>"]
+    end
+
+    %% ===================== STYLING =====================
+    classDef client fill:#e8f4f8,stroke:#2196F3,stroke-width:2px,color:#333
+    classDef api fill:#fff3e0,stroke:#FF9800,stroke-width:2px,color:#333
+    classDef pipeline fill:#e8eaf6,stroke:#3F51B5,stroke-width:2px,color:#333
+    classDef retriever fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px,color:#333
+    classDef reranker fill:#fce4ec,stroke:#E91E63,stroke-width:2px,color:#333
+    classDef generator fill:#f3e5f5,stroke:#9C27B0,stroke-width:2px,color:#333
+    classDef llm fill:#fff8e1,stroke:#FFC107,stroke-width:2px,color:#333
+    classDef embed fill:#e0f7fa,stroke:#00BCD4,stroke-width:2px,color:#333
+    classDef storage fill:#efebe9,stroke:#795548,stroke-width:2px,color:#333
+    classDef config fill:#f5f5f5,stroke:#9E9E9E,stroke-width:2px,color:#333
+    classDef model fill:#eceff1,stroke:#607D8B,stroke-width:1px,color:#333
+
+    class WebUI,REST client
+    class Health,Ingest,Ask,CfgGet,CfgPut api
+    class PipeIngest,PipeAsk,PipeSettings pipeline
+    class VChunk,VEmbed,VSearch,PIBuild,PISearch,PIFallback,MR,PTV retriever
+    class BuildReranker,CEModel,CEScore,NoOp reranker
+    class GenPrompt,GenStream,GenAnswer generator
+    class LLMFactory,Complete,Stream,Structured,Ping,ReasonEP,GenEP llm
+    class EmbedFactory,LocalEmbed,OAIEmbed embed
+    class ChromaDB,PIFiles storage
+    class Settings,EnvFile config
+    class MDoc,MPage,MChunk,MTree,MCtx,MAns model
+    class PDFLoad,MDLoad,TXTLoad pipeline

@@ -1,0 +1,4 @@
+mode,page_hit,page_recall,page_mrr,page_ndcg,doc_hit,doc_mrr,context_precision,context_recall,faithfulness,answer_relevancy,factual_correctness,latency_s
+vector,0.6,0.6,0.35,0.41232126232897015,0.8,0.7,nan,nan,nan,nan,nan,1.1885999999999999
+pageindex,0.8,0.8,0.7,0.7261859507142916,0.8,0.8,nan,nan,nan,nan,nan,2.261
+hybrid,0.6,0.6,0.4,0.452371901428583,1.0,0.8,nan,nan,nan,nan,nan,2.6526

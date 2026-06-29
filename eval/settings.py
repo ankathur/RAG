@@ -26,8 +26,8 @@ class EvalSettings(BaseSettings):
     )
 
     # ---- Judge LLM (independent family from the generator → less self-grading) ----
-    judge_model: str = "gemma4:26b"
-    judge_base_url: str | None = None  # defaults to the generation endpoint
+    judge_model: str = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    judge_base_url: str = "http://172.16.17.83/v1"  # defaults to the generation endpoint
     judge_api_key: str | None = None
 
     # ---- Embeddings for Ragas (test-set synthesis + answer relevancy) ----

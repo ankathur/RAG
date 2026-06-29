@@ -20,5 +20,4 @@ data/kb/tb/*
 web/node_modules/
 web/dist/
 web/.env
-eval/results/
-eval/testset.jsonl
+
