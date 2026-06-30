@@ -3,7 +3,6 @@
 - Generated: 2026-06-26T20:10:23
 - Questions: 12  ·  k: 6  ·  modes: vector, pageindex, hybrid
 - Generator: `google/gemma-4-31B-it`  ·  Judge: `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16`  ·  Embeddings: `BAAI/bge-m3`
-- Endpoint: `http://172.16.17.83/v1`
 
 ## Summary (mean per mode)
 
